@@ -23,9 +23,6 @@ remain unmerged and may be recreated between runs:
 - `evidence/github-revision-race`: head-revision failure scenarios.
 - `evidence/github-oversized-diff`: generated only for the oversized-diff run.
 
-Lifecycle probe marker: stale-head trigger A.
-Lifecycle probe marker: stale-head trigger B.
-
 Repository variables keep automatic review disabled. An operator manually
 dispatches the `AI Review` workflow with the target pull-request number after
 repository secrets and the required gate rule are configured.
