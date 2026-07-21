@@ -59,3 +59,4 @@ Late manifest race marker.
 # Manifest finalization race trigger A (2026-07-21)
 # Manifest finalization race trigger B (2026-07-21)
 # Manifest finalization race trigger C (2026-07-21)
+# Manifest finalization race trigger D (2026-07-21)
