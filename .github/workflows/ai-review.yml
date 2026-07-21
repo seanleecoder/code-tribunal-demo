@@ -1,0 +1,280 @@
+# Safe GitHub Actions template for Code Tribunal / ai-review.
+# Run secret-bearing review jobs on pull_request after the repository's checked-in
+# workflow has been selected by GitHub. Do not move this job to pull_request_target:
+# attacker-controlled pull request code could then run with write credentials.
+name: AI Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-review-pr-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+env:
+  AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
+  PYTHONPATH: /opt/ai-review/src
+  AI_REVIEW_POSTING_MODE: github_reviews
+  AI_REVIEW_STATE_BACKEND: github_pr_comment
+  AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]
+  # Actions repository variables live in the `vars` context; they are not
+  # process environment variables until explicitly mapped. Keep overrides at
+  # workflow scope so prepare, review, critique, consensus, post, and gate all
+  # load the same effective configuration.
+  AI_REVIEW_CLAUDE_MODEL: ${{ vars.AI_REVIEW_CLAUDE_MODEL || '' }}
+  AI_REVIEW_CODEX_MODEL: ${{ vars.AI_REVIEW_CODEX_MODEL || '' }}
+  AI_REVIEW_OPENCODE_MODEL: ${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}
+  AI_REVIEW_CURSOR_MODEL: ${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}
+  AI_REVIEW_CLAUDE_ENABLED: ${{ vars.AI_REVIEW_CLAUDE_ENABLED || 'true' }}
+  AI_REVIEW_CODEX_ENABLED: ${{ vars.AI_REVIEW_CODEX_ENABLED || 'true' }}
+  AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}
+  AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}
+  AI_REVIEW_CLAUDE_EFFORT: ${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}
+  AI_REVIEW_CODEX_EFFORT: ${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}
+  AI_REVIEW_OPENCODE_EFFORT: ${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}
+  AI_REVIEW_CRITIQUE_ENABLED: ${{ vars.AI_REVIEW_CRITIQUE_ENABLED || 'true' }}
+  AI_REVIEW_MERGE_GATE_ENABLED: ${{ vars.AI_REVIEW_MERGE_GATE_ENABLED || 'true' }}
+  AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED: ${{ vars.AI_REVIEW_PANEL_GROUPING_SEMANTIC_ENABLED || 'false' }}
+  AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD: ${{ vars.AI_REVIEW_PANEL_GROUPING_SEMANTIC_THRESHOLD || '0.5' }}
+
+jobs:
+  prepare:
+    if: >-
+      ${{
+        (github.event_name == 'pull_request' &&
+          vars.AI_REVIEW_MANUAL != 'true' &&
+          github.event.pull_request.head.repo.full_name == github.repository) ||
+        github.event_name == 'workflow_dispatch'
+      }}
+    runs-on: ubuntu-latest
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1
+    steps:
+      - name: Resolve pull request
+        id: pull-request
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            let pullRequest = context.payload.pull_request;
+            if (context.eventName === "workflow_dispatch") {
+              const requestedNumber = process.env.PR_NUMBER || "";
+              if (!/^[1-9][0-9]{0,9}$/.test(requestedNumber)) {
+                core.setFailed("pr_number must be a positive integer of at most 10 digits");
+                return;
+              }
+              const response = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: Number(requestedNumber),
+              });
+              pullRequest = response.data;
+            }
+            if (!pullRequest) {
+              core.setFailed("pull request metadata was unavailable");
+              return;
+            }
+            const sourceRepository = pullRequest.head?.repo?.full_name;
+            if (sourceRepository !== repository) {
+              core.setFailed(
+                `external fork PR checkout is disabled (source=${sourceRepository || "unknown"}, repository=${repository})`,
+              );
+              return;
+            }
+            const headSha = pullRequest.head?.sha || "";
+            if (!/^[0-9a-f]{40,64}$/.test(headSha)) {
+              core.setFailed("pull request head SHA was missing or invalid");
+              return;
+            }
+            const pullNumber = String(pullRequest.number || "");
+            if (!/^[1-9][0-9]{0,9}$/.test(pullNumber)) {
+              core.setFailed("pull request number was missing or invalid");
+              return;
+            }
+            core.setOutput("head_sha", headSha);
+            core.setOutput("pr_number", pullNumber);
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ steps.pull-request.outputs.head_sha }}
+      - name: Prepare input bundle
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AI_REVIEW_GITHUB_PR_NUMBER: ${{ steps.pull-request.outputs.pr_number }}
+          AI_REVIEW_GITHUB_EXPECTED_HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
+        run: python -m ai_review.input_bundle prepare --config "$AI_REVIEW_CONFIG" --out inputs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-review-inputs
+          path: inputs/
+
+  review:
+    needs: prepare
+    # Individual model failures are data for deterministic consensus. Keep the
+    # fan-out running; consensus fails with panel_status=failed when no reviewer
+    # succeeds, so this does not turn a total panel failure into a green gate.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae
+    strategy:
+      fail-fast: false
+      matrix:
+        reviewer: [claude, codex, opencode, cursor]
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-inputs
+          path: inputs
+      - name: Run reviewer
+        env:
+          REVIEWER: ${{ matrix.reviewer }}
+          AI_REVIEW_INPUT_DIR: inputs
+          AI_REVIEW_OUTPUT_DIR: out
+          AI_REVIEW_LOCAL_MOCK: "0"
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+          CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
+          AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
+          AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
+          AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
+          AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
+          ANTHROPIC_BASE_URL: https://openrouter.ai/api
+        run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" review
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ai-review-review-${{ matrix.reviewer }}
+          path: out/
+
+  critique:
+    needs: [prepare, review]
+    # Critique is optional evidence. A failed critic must not suppress consensus
+    # over otherwise valid reviewer findings.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae
+    strategy:
+      fail-fast: false
+      matrix:
+        reviewer: [claude, codex, opencode, cursor]
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-inputs
+          path: inputs
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ai-review-review-*
+          path: out
+          merge-multiple: true
+      - name: Run critique
+        env:
+          REVIEWER: ${{ matrix.reviewer }}
+          AI_REVIEW_INPUT_DIR: inputs
+          AI_REVIEW_OUTPUT_DIR: out
+          AI_REVIEW_LOCAL_MOCK: "0"
+          OPENROUTER_API_KEY: ${{ env.AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || '' }}
+          OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+          CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
+          AI_REVIEW_REQUIRE_REAL_OPENROUTER: "1"
+          AI_REVIEW_REQUIRE_REAL_CLAUDE: "1"
+          AI_REVIEW_REQUIRE_REAL_OPENCODE: "1"
+          AI_REVIEW_REQUIRE_REAL_CURSOR: "1"
+          ANTHROPIC_BASE_URL: https://openrouter.ai/api
+        run: /opt/ai-review/adapters/run_reviewer.sh "$REVIEWER" critique
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ai-review-critique-${{ matrix.reviewer }}
+          path: |
+            out/critiques/${{ matrix.reviewer }}.json
+            out/pooled_findings/${{ matrix.reviewer }}.json
+            out/status/critique-${{ matrix.reviewer }}.json
+
+  consensus:
+    needs: [prepare, review, critique]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-inputs
+          path: inputs
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ai-review-review-*
+          path: reviewer-artifacts
+          merge-multiple: true
+      - name: Download critique artifacts
+        id: download-critiques
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ai-review-critique-*
+          path: reviewer-artifacts
+          merge-multiple: true
+      - name: Report missing critique artifacts
+        if: steps.download-critiques.outcome == 'failure'
+        run: echo "::warning::No critique artifacts were available; consensus will use reviewer findings only."
+      - name: Build consensus
+        run: python -m ai_review.consensus --config "$AI_REVIEW_CONFIG" --inputs inputs --findings-dir reviewer-artifacts/findings --critiques-dir reviewer-artifacts/critiques --out out/consensus/consensus.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-review-consensus
+          path: out/consensus/
+
+  post:
+    needs: [prepare, consensus]
+    runs-on: ubuntu-latest
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-inputs
+          path: inputs
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-consensus
+          path: out/consensus
+      - name: Post GitHub review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AI_REVIEW_GITHUB_RESOLVE_TOKEN: ${{ secrets.AI_REVIEW_GITHUB_RESOLVE_TOKEN }}
+        run: python -m ai_review.post --config "$AI_REVIEW_CONFIG" --inputs inputs --consensus out/consensus/consensus.json --out out/post/post_result.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ai-review-post
+          path: out/post/
+
+  gate:
+    needs: [consensus, post]
+    runs-on: ubuntu-latest
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-963ae5ef8415f6866258ca24c7b5b0b054f58411@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-consensus
+          path: out/consensus
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-review-post
+          path: out/post
+      - name: Evaluate gate
+        run: python -m ai_review.gate --config "$AI_REVIEW_CONFIG" --consensus out/consensus/consensus.json --post-result out/post/post_result.json --out out/gate/gate_result.json
