@@ -107,16 +107,17 @@ jobs:
             }
             core.setOutput("head_sha", headSha);
             core.setOutput("pr_number", pullNumber);
+      # Evidence harness only: leave enough time for the operator to advance
+      # PR #2 after selection and prove checkout remains bound to the selected
+      # immutable SHA even though the mutable PR head has advanced.
+      - name: Revision-race synchronization window
+        if: github.event_name == 'workflow_dispatch'
+        run: sleep 15
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ steps.pull-request.outputs.head_sha }}
-      # Evidence harness only: leave enough time for the operator to advance
-      # PR #2 after resolution and prove prepare rejects the stale selection.
-      - name: Revision-race synchronization window
-        if: github.event_name == 'workflow_dispatch'
-        run: sleep 15
       - name: Prepare input bundle
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
