@@ -6,10 +6,10 @@ Code Tribunal runtime source and must not contain production credentials.
 
 ## Trusted release candidate
 
-- Runtime source: `963ae5ef8415f6866258ca24c7b5b0b054f58411`
-- Workflow source: `seanleecoder/code-tribunal` PR 76
-- Base image: `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:7d431a65a9ddb4306536111287aefff40d36750c36dd34149bae95e78dac24e1`
-- Reviewer image: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:8e43a7426d0ff92fc34c2bf0772034969124027a1f244b2cd371470fb2edc2ae`
+- Runtime source: `b674d1e4962ec976b5ca2c056a78b47d2b3d9a61`
+- Workflow source: `seanleecoder/code-tribunal` PR 77
+- Base image: `ghcr.io/seanleecoder/code-tribunal/ai-review-base@sha256:2f5e9462ef9c13ccc6258b7a6bf9159ea452b567429d23c0380f7e9211e44d68`
+- Reviewer image: `ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer@sha256:658ba0713abb0bd9e7547ae6cc6d8be5e96e13b80df3cbf0fe58cce1d383a540`
 
 The workflow is intentionally limited to same-repository pull requests. Never
 change it to `pull_request_target`, and never commit provider keys or tokens.
