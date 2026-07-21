@@ -22,6 +22,8 @@ remain unmerged and may be recreated between runs:
 - `evidence/github-lifecycle`: review posting and state lifecycle.
 - `evidence/github-revision-race`: head-revision failure scenarios.
 - `evidence/github-oversized-diff`: generated only for the oversized-diff run.
+- `evidence/github-manifest-base`: heavy snapshot baseline used to widen the
+  manifest-finalization race window in disposable evidence PRs.
 
 Repository variables keep automatic review disabled. An operator manually
 dispatches the `AI Review` workflow with the target pull-request number after
