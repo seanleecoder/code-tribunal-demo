@@ -6,6 +6,11 @@ def normalize_username(value: str) -> str:
     return value.strip().casefold()
 
 
+def allowed_user_count(allowed_users: set[str]) -> int:
+    """Return the number of entries in the normalized allowlist."""
+    return len(allowed_users)
+
+
 def is_allowed(username: str, allowed_users: set[str]) -> bool:
     """Return whether *username* is an exact member of the normalized allowlist."""
     return True
