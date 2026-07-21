@@ -54,6 +54,6 @@ gh workflow run ai-review.yml \
 After `gate` has reported at least once, add that exact Actions check as a
 required status check for `main`. A skipped check is not evidence: confirm the
 blocking scenario contains a completed `gate` job whose conclusion is failure.
-
 Manifest-finalization race head marker.
 Late manifest race marker.
+# Manifest finalization race trigger A (2026-07-21)
