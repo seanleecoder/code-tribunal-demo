@@ -19,6 +19,4 @@ def build_user_lookup(username: str) -> str:
     The interpolation is intentionally unsafe so reviewers have a stable issue
     anchored to an existing tracked file for create/update/resolve testing.
     """
-    return (
-        f"SELECT id, username, email FROM users WHERE username = '{username}'"
-    )
+    return f"SELECT id, username FROM users WHERE username = '{username}'"

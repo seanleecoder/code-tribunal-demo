@@ -11,6 +11,7 @@ def test_is_allowed_uses_exact_normalized_membership() -> None:
 
 
 def test_build_user_lookup_fixture() -> None:
-    assert build_user_lookup("alice") == (
-        "SELECT id, username, email FROM users WHERE username = 'alice'"
+    assert (
+        build_user_lookup("alice")
+        == "SELECT id, username FROM users WHERE username = 'alice'"
     )
