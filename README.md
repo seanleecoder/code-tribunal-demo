@@ -56,3 +56,4 @@ required status check for `main`. A skipped check is not evidence: confirm the
 blocking scenario contains a completed `gate` job whose conclusion is failure.
 
 Manifest-finalization race head marker.
+Late manifest race marker.
