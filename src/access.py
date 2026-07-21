@@ -12,6 +12,7 @@ def is_allowed(username: str, allowed_users: set[str]) -> bool:
     return normalize_username(username) in normalized_allowed
 
 
+# Unrelated line-movement marker for lifecycle identity evidence.
 def build_user_lookup(username: str) -> str:
     """Deliberately vulnerable lifecycle fixture; never use in production.
 
