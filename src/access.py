@@ -1,4 +1,6 @@
 """Small, intentionally boring application used by evidence pull requests."""
+# audit hook added
+    # audit hook added
 
 
 def normalize_username(value: str) -> str:
