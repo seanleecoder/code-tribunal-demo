@@ -37,10 +37,33 @@ env:
   AI_REVIEW_CODEX_MODEL: ${{ vars.AI_REVIEW_CODEX_MODEL || '' }}
   AI_REVIEW_OPENCODE_MODEL: ${{ vars.AI_REVIEW_OPENCODE_MODEL || '' }}
   AI_REVIEW_CURSOR_MODEL: ${{ vars.AI_REVIEW_CURSOR_MODEL || '' }}
-  AI_REVIEW_CLAUDE_ENABLED: ${{ vars.AI_REVIEW_CLAUDE_ENABLED || 'true' }}
-  AI_REVIEW_CODEX_ENABLED: ${{ vars.AI_REVIEW_CODEX_ENABLED || 'true' }}
-  AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_OPENCODE_ENABLED || 'true' }}
-  AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_CURSOR_ENABLED || 'false' }}
+  # Panel roster. Every reviewer is a peer: set AI_REVIEW_REVIEWERS to a
+  # comma-separated list (e.g. `claude,codex,cursor`) and the seats you list are
+  # enabled while every other configured seat sits out. Leave it unset to use the
+  # defaults in config/review.yaml.
+  #
+  # Requires a runtime that supports the roster. The jobs below execute
+  # /opt/ai-review from the pinned images, not this checkout. Setting a roster
+  # while the pins predate roster support fails `prepare` loudly rather than
+  # changing the panel: the per-seat flags below resolve to '' and a runtime
+  # without empty-as-unset rejects that value. The failure is the intended signal
+  # to repin; it is not silent. Leaving the roster unset keeps this template fully
+  # compatible with the older pins.
+  AI_REVIEW_REVIEWERS: ${{ vars.AI_REVIEW_REVIEWERS || '' }}
+  # The roster is mutually exclusive with these per-seat flags, so when a roster
+  # is set they must reach the config parser as unset ('') rather than as a
+  # hardcoded boolean that would permanently contradict it.
+  #
+  # They are only blanked when a roster is actually set. Older runtimes reject an
+  # empty value instead of treating it as unset, so blanking unconditionally would
+  # fail `prepare` on every run against a pinned image built before that change.
+  # Gating on the roster keeps this template working against both runtimes: no
+  # roster means the previous literal defaults, and the empty form is reached only
+  # by an operator who has opted into a feature that needs the newer image anyway.
+  AI_REVIEW_CLAUDE_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_CLAUDE_ENABLED || 'true') || '' }}
+  AI_REVIEW_CODEX_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_CODEX_ENABLED || 'true') || '' }}
+  AI_REVIEW_OPENCODE_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_OPENCODE_ENABLED || 'true') || '' }}
+  AI_REVIEW_CURSOR_ENABLED: ${{ vars.AI_REVIEW_REVIEWERS == '' && (vars.AI_REVIEW_CURSOR_ENABLED || 'false') || '' }}
   AI_REVIEW_CLAUDE_EFFORT: ${{ vars.AI_REVIEW_CLAUDE_EFFORT || '' }}
   AI_REVIEW_CODEX_EFFORT: ${{ vars.AI_REVIEW_CODEX_EFFORT || '' }}
   AI_REVIEW_OPENCODE_EFFORT: ${{ vars.AI_REVIEW_OPENCODE_EFFORT || '' }}
@@ -57,7 +80,7 @@ jobs:
         github.event_name == 'workflow_dispatch'
       }}
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-5817e99f8d831a816056feb2dfd44fac85b5196c@sha256:657d5e700768f29e98a980bf6264891d870b8e90af22ab9bd6c82beb30e27e03
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f21418f13bd0e0c67e250d1720887b71e6b1f519@sha256:91e38d7d8fc3a4f7e764c30155ef509aa9c4f5b2f0d886eb612ce0df2d888250
     steps:
       - name: Resolve pull request
         id: pull-request
@@ -128,9 +151,10 @@ jobs:
     # succeeds, so this does not turn a total panel failure into a green gate.
     continue-on-error: true
     runs-on: ubuntu-latest
-    # Outer ceiling for the 900s process timeout plus wrapper/artifact overhead.
-    timeout-minutes: 20
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-5817e99f8d831a816056feb2dfd44fac85b5196c@sha256:a4b35e46ac23881e1a4dca52d2cf6a04ee77378d519706f43e70271f0d54cb0d
+    # Outer ceiling for the 1800s review process timeout plus wrapper/artifact
+    # overhead.
+    timeout-minutes: 40
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-f21418f13bd0e0c67e250d1720887b71e6b1f519@sha256:055c611afc0f49d1b2ffe8f77622ec449ee101e0b830e223633440f0073982ca
     strategy:
       fail-fast: false
       matrix:
@@ -150,7 +174,19 @@ jobs:
           AI_REVIEW_MOCK_SCENARIO: ${{ vars.AI_REVIEW_MOCK_SCENARIO }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
-          CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
+          # Cursor's backend is a deliberate second egress destination, so this
+          # credential reaches exactly one matrix entry and only when Cursor is on
+          # the panel. `matrix.reviewer == 'cursor'` is load-bearing: the step env
+          # is evaluated per matrix entry, so without it every seat's job would
+          # carry the key whenever Cursor was selected.
+          #
+          # The legacy flag is consulted only when no roster is set. With a roster
+          # present it is ignored for panel selection, so honoring it here would
+          # hand the key to a Cursor seat the roster had excluded.
+          #
+          # The roster check is a substring match because Actions expressions have
+          # no split(); no other reviewer name contains "cursor".
+          CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || (vars.AI_REVIEW_REVIEWERS == '' && vars.AI_REVIEW_CURSOR_ENABLED == 'true')) && secrets.CURSOR_API_KEY || '' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: ${{ vars.AI_REVIEW_REQUIRE_REAL_OPENROUTER || '1' }}
           AI_REVIEW_REQUIRE_REAL_CLAUDE: ${{ vars.AI_REVIEW_REQUIRE_REAL_CLAUDE || '1' }}
           AI_REVIEW_REQUIRE_REAL_OPENCODE: ${{ vars.AI_REVIEW_REQUIRE_REAL_OPENCODE || '1' }}
@@ -169,9 +205,10 @@ jobs:
     # over otherwise valid reviewer findings.
     continue-on-error: true
     runs-on: ubuntu-latest
-    # Outer ceiling for the 900s process timeout plus wrapper/artifact overhead.
+    # Outer ceiling for the 900s critique process timeout plus wrapper/artifact
+    # overhead.
     timeout-minutes: 20
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-5817e99f8d831a816056feb2dfd44fac85b5196c@sha256:a4b35e46ac23881e1a4dca52d2cf6a04ee77378d519706f43e70271f0d54cb0d
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-f21418f13bd0e0c67e250d1720887b71e6b1f519@sha256:055c611afc0f49d1b2ffe8f77622ec449ee101e0b830e223633440f0073982ca
     strategy:
       fail-fast: false
       matrix:
@@ -196,7 +233,19 @@ jobs:
           AI_REVIEW_MOCK_SCENARIO: ${{ vars.AI_REVIEW_MOCK_SCENARIO }}
           OPENROUTER_API_KEY: ${{ env.AI_REVIEW_CRITIQUE_ENABLED == 'true' && secrets.OPENROUTER_API_KEY || '' }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
-          CURSOR_API_KEY: ${{ vars.AI_REVIEW_CURSOR_ENABLED == 'true' && secrets.CURSOR_API_KEY || '' }}
+          # Cursor's backend is a deliberate second egress destination, so this
+          # credential reaches exactly one matrix entry and only when Cursor is on
+          # the panel. `matrix.reviewer == 'cursor'` is load-bearing: the step env
+          # is evaluated per matrix entry, so without it every seat's job would
+          # carry the key whenever Cursor was selected.
+          #
+          # The legacy flag is consulted only when no roster is set. With a roster
+          # present it is ignored for panel selection, so honoring it here would
+          # hand the key to a Cursor seat the roster had excluded.
+          #
+          # The roster check is a substring match because Actions expressions have
+          # no split(); no other reviewer name contains "cursor".
+          CURSOR_API_KEY: ${{ matrix.reviewer == 'cursor' && (contains(vars.AI_REVIEW_REVIEWERS, 'cursor') || (vars.AI_REVIEW_REVIEWERS == '' && vars.AI_REVIEW_CURSOR_ENABLED == 'true')) && secrets.CURSOR_API_KEY || '' }}
           AI_REVIEW_REQUIRE_REAL_OPENROUTER: ${{ vars.AI_REVIEW_REQUIRE_REAL_OPENROUTER || '1' }}
           AI_REVIEW_REQUIRE_REAL_CLAUDE: ${{ vars.AI_REVIEW_REQUIRE_REAL_CLAUDE || '1' }}
           AI_REVIEW_REQUIRE_REAL_OPENCODE: ${{ vars.AI_REVIEW_REQUIRE_REAL_OPENCODE || '1' }}
@@ -216,7 +265,7 @@ jobs:
     needs: [prepare, review, critique]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-5817e99f8d831a816056feb2dfd44fac85b5196c@sha256:657d5e700768f29e98a980bf6264891d870b8e90af22ab9bd6c82beb30e27e03
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f21418f13bd0e0c67e250d1720887b71e6b1f519@sha256:91e38d7d8fc3a4f7e764c30155ef509aa9c4f5b2f0d886eb612ce0df2d888250
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -248,7 +297,7 @@ jobs:
   post:
     needs: [prepare, consensus]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-5817e99f8d831a816056feb2dfd44fac85b5196c@sha256:657d5e700768f29e98a980bf6264891d870b8e90af22ab9bd6c82beb30e27e03
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f21418f13bd0e0c67e250d1720887b71e6b1f519@sha256:91e38d7d8fc3a4f7e764c30155ef509aa9c4f5b2f0d886eb612ce0df2d888250
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -272,7 +321,7 @@ jobs:
   gate:
     needs: [consensus, post]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-5817e99f8d831a816056feb2dfd44fac85b5196c@sha256:657d5e700768f29e98a980bf6264891d870b8e90af22ab9bd6c82beb30e27e03
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-f21418f13bd0e0c67e250d1720887b71e6b1f519@sha256:91e38d7d8fc3a4f7e764c30155ef509aa9c4f5b2f0d886eb612ce0df2d888250
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
