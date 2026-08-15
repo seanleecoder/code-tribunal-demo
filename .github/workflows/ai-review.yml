@@ -27,7 +27,6 @@ env:
   AI_REVIEW_CONFIG: /opt/ai-review/config/review.yaml
   PYTHONPATH: /opt/ai-review/src
   AI_REVIEW_POSTING_MODE: github_reviews
-  AI_REVIEW_STATE_BACKEND: github_pr_comment
   AI_REVIEW_GITHUB_BOT_LOGIN: github-actions[bot]
   # Actions repository variables live in the `vars` context; they are not
   # process environment variables until explicitly mapped. Keep overrides at
@@ -80,7 +79,7 @@ jobs:
         github.event_name == 'workflow_dispatch'
       }}
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-451472d2ed0a8bc5d870409b224a69199570c843@sha256:bb32fdb886c57ef23425a7b3dfba62c593c3d76488aba68ed64aff7a28f674d7
     steps:
       - name: Resolve pull request
         id: pull-request
@@ -154,7 +153,7 @@ jobs:
     # Outer ceiling for the 1800s review process timeout plus wrapper/artifact
     # overhead.
     timeout-minutes: 40
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-451472d2ed0a8bc5d870409b224a69199570c843@sha256:8b1a1bd144cc1685ae550845f9069790222d1c1e0017bc75e8a67ac852684b74
     strategy:
       fail-fast: false
       matrix:
@@ -208,7 +207,7 @@ jobs:
     # Outer ceiling for the 900s critique process timeout plus wrapper/artifact
     # overhead.
     timeout-minutes: 20
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:6bf8fdfbe11a3b85519ae954411b436e5bed5f895e900074404a7b27359e6fab
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-reviewer:1.0-451472d2ed0a8bc5d870409b224a69199570c843@sha256:8b1a1bd144cc1685ae550845f9069790222d1c1e0017bc75e8a67ac852684b74
     strategy:
       fail-fast: false
       matrix:
@@ -265,7 +264,7 @@ jobs:
     needs: [prepare, review, critique]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-451472d2ed0a8bc5d870409b224a69199570c843@sha256:bb32fdb886c57ef23425a7b3dfba62c593c3d76488aba68ed64aff7a28f674d7
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -297,7 +296,7 @@ jobs:
   post:
     needs: [prepare, consensus]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-451472d2ed0a8bc5d870409b224a69199570c843@sha256:bb32fdb886c57ef23425a7b3dfba62c593c3d76488aba68ed64aff7a28f674d7
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -321,7 +320,7 @@ jobs:
   gate:
     needs: [consensus, post]
     runs-on: ubuntu-latest
-    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-54dffa130be5c921602f264a2123fda4b1895f13@sha256:960600d339a9c7ed95539fe5de6f2414ed82fb06b96a02ed267d9332cd3d7fb4
+    container: ghcr.io/seanleecoder/code-tribunal/ai-review-base:1.0-451472d2ed0a8bc5d870409b224a69199570c843@sha256:bb32fdb886c57ef23425a7b3dfba62c593c3d76488aba68ed64aff7a28f674d7
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
