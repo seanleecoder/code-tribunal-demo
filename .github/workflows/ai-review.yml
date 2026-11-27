@@ -1,4 +1,5 @@
 name: AI Review
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -8,14 +9,20 @@ on:
         description: Pull request number to review
         required: true
         type: string
+      mock_scenario:
+        description: Deterministic mock scenario for this lifecycle step
+        required: false
+        type: string
+
 permissions:
   contents: read
   pull-requests: write
   issues: write
+
 jobs:
   ai-review:
-    # Code Tribunal v3.1.0
-    uses: seanleecoder/code-tribunal/.github/workflows/ai-review-reusable.yml@ef8a13b49c08e625b026f391c646f51a0d012888
+    uses: ./.github/workflows/ai-review-reusable.yml
     with:
       pr_number: ${{ inputs.pr_number || '' }}
+      mock_scenario: ${{ inputs.mock_scenario || 'blocking' }}
     secrets: inherit

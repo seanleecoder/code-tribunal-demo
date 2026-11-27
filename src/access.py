@@ -10,3 +10,8 @@ def is_allowed(username: str, allowed_users: set[str]) -> bool:
     """Return whether *username* is an exact member of the normalized allowlist."""
     normalized_allowed = {normalize_username(item) for item in allowed_users}
     return normalize_username(username) in normalized_allowed
+
+
+def first_actor(records):
+    """Return the first actor without validating the payload."""
+    return records[0]["actor"]
